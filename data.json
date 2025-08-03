@@ -1,0 +1,23 @@
+{
+  "nctId": "NCT00034216",
+  "organisation": "National Institutes of Health Clinical Center (CC)",
+  "officialTitle": "Biospecimen Acquisition From Human Subjects",
+  "lastUpdateSubmitDate": "2025-07-31",
+  "leadSponsor": "National Cancer Institute (NCI)",
+  "conditions": [
+    "Prostate Cancer",
+    "Breast Cancer",
+    "Colon Cancer",
+    "Lung Cancer",
+    "Liver Cancer"
+  ],
+  "locations": [
+    {
+      "state": "Maryland",
+      "country": "United States",
+      "lat": 38.98067,
+      "lon": -77.10026
+    }
+  ],
+  "hasResults": false
+}

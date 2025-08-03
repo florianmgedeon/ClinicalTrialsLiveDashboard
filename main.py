@@ -3,30 +3,9 @@ import json
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
+from datetime import date
 
-
-# GET NCT ID
-
-def fetch_latest_trial_summary():
-    base_url = "https://clinicaltrials.gov/api/v2/studies"
-    params = {"sort": "LastUpdatePostDate:desc", "pageSize": 1}
-    response = requests.get(base_url, params=params)
-    response.raise_for_status()
-
-    studies = response.json().get("studies", [])
-    if not studies:
-        return None
-
-    nct_id = studies[0]["protocolSection"]["identificationModule"]["nctId"]
-    detail = requests.get(f"https://clinicaltrials.gov/api/v2/studies/{nct_id}")
-    detail.raise_for_status()
-    full_study = detail.json()
-
-    return extract_summary(full_study)
-
-# FILTER INFO
-
-
+# FILTER INFO (unchanged)
 def extract_summary(full_study: dict) -> dict:
     ps = full_study.get("protocolSection", {})
     ident = ps.get("identificationModule", {})
@@ -57,102 +36,112 @@ def extract_summary(full_study: dict) -> dict:
 
     return summary
 
-
-#MAIN:
-
-
-#USER INPUT
-
-
-
-
-trial = fetch_latest_trial_summary()
-if trial is None:
-    st.error("No trials found.")
-else:
-    #TABLE
-    df = pd.DataFrame([{
-        "NCT ID": trial["nctId"],
-        "Organisation": trial["organisation"],
-        "Title": trial["officialTitle"],
-        "Last Update": trial["lastUpdateSubmitDate"],
-        "Lead Sponsor": trial["leadSponsor"],
-        "Conditions": ", ".join(trial["conditions"]),
-        "Has Results": trial["hasResults"],
-        "Location State": trial["locations"][0]["state"] if trial["locations"] else "",
-        "Location Country": trial["locations"][0]["country"] if trial["locations"] else "",
-        "Latitude": trial["locations"][0]["lat"] if trial["locations"] else "",
-        "Longitude": trial["locations"][0]["lon"] if trial["locations"] else "",
-    }])
-
-    df_show = pd.DataFrame([{
-        "Last Update": trial["lastUpdateSubmitDate"],
-        "Organisation": trial["organisation"],
-        "Title": trial["officialTitle"],
-        "NCT ID": trial["nctId"],
-        "Lead Sponsor": trial["leadSponsor"],
-        "Conditions": ", ".join(trial["conditions"]),
-        "Has Results": "Yes" if trial["hasResults"] else "No",
-        "Location State": trial["locations"][0]["state"] if trial["locations"] else "",
-        "Location Country": trial["locations"][0]["country"] if trial["locations"] else "",
-    }])
-st.subheader("Studies")
-st.dataframe(df_show, use_container_width=True, height=150)
-#MAP:
-location_data = pd.DataFrame([{
-    "latitude": loc["lat"],
-    "longitude": loc["lon"],
-    "organisation": trial["organisation"],
-    "title": trial["officialTitle"],
-    "state": loc["state"],
-    "country": loc["country"]
-} for loc in trial["locations"] if loc.get("lat") and loc.get("lon")])
-
-if not location_data.empty:
-    st.subheader("Study Location")
-
-    # Set default view to global (zoomed out)
-    view_state = pdk.ViewState(
-        latitude=0,
-        longitude=0,
-        zoom=0.5,
-        pitch=0
-    )
-
-    # Create scatter layer
-    layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=location_data,
-        get_position='[longitude, latitude]',
-        get_radius=7,
-        radius_units='pixels',
-        get_fill_color=[0, 255, 0, 180],
-        pickable=True,
-        tooltip=True
-    )
-
-    tooltip = {
-        "html": """
-            <b>Organisation:</b> {organisation}<br/>
-            <b>Title:</b> {title}<br/>
-            <b>State:</b> {state}<br/>
-            <b>Country:</b> {country}
-        """,
-        "style": {
-            "backgroundColor": "white",
-            "color": "black",
-            "fontSize": "12px"
-        }
+# NEW: Fetch up to 20 studies within date range using v2 query.rang
+def fetch_trials_by_date(start_date: str, end_date: str, max_pages: int = 20, page_size: int = 1):
+    """
+    Query v2 API with date range filter, 1 record per page to gather up to max_pages trials.
+    Uses lastUpdate post date range filtering via query.term.
+    """
+    all_trials = []
+    base_url = "https://clinicaltrials.gov/api/v2/studies"
+    params = {
+        "query.term": f"AREA[LastUpdatePostDate]RANGE[{start_date},{end_date}]",
+        "sort": "LastUpdatePostDate:desc",
+        "pageSize": page_size
     }
 
-    # Render the map
-    st.pydeck_chart(pdk.Deck(
-        map_style=None,
-        initial_view_state=view_state,
-        layers=[layer],
-        tooltip=tooltip
-        ),
-        height=400
-    )
+    for page in range(max_pages):
+        resp = requests.get(base_url, params=params)
+        resp.raise_for_status()
+        rr = resp.json()
+
+        studies = rr.get("studies", [])
+        if not studies:
+            break
+
+        for study in studies:
+            nct_id = study["protocolSection"]["identificationModule"]["nctId"]
+            detail_resp = requests.get(f"{base_url}/{nct_id}")
+            detail_resp.raise_for_status()
+            full = detail_resp.json()
+            all_trials.append(extract_summary(full))
+
+        token = rr.get("nextPageToken")
+        if not token:
+            break
+        params["pageToken"] = token
+        # Remove pageToken on first iteration maybe; if token present, pageSize controls
+    return all_trials
+
+# STREAMLIT UI
+st.title("Clinical Trials Viewer")
+
+start = st.date_input("Start date", date.today())
+end = st.date_input("End date", date.today())
+if start > end:
+    st.error("Start date must be before end date.")
 else:
-    st.info("No location data available for this study.")
+    trials = fetch_trials_by_date(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+
+    if not trials:
+        st.warning("No trials found in the selected range.")
+    else:
+        # Uses your existing df_show code exactly:
+        df_show = pd.DataFrame([{
+            "Last Update": t["lastUpdateSubmitDate"],
+            "Organisation": t["organisation"],
+            "Title": t["officialTitle"],
+            "NCT ID": t["nctId"],
+            "Lead Sponsor": t["leadSponsor"],
+            "Conditions": ", ".join(t["conditions"]),
+            "Has Results": "Yes" if t["hasResults"] else "No",
+            "Location State": t["locations"][0]["state"] if t["locations"] else "",
+            "Location Country": t["locations"][0]["country"] if t["locations"] else "",
+        } for t in trials])
+
+        st.subheader("Studies")
+        st.dataframe(df_show, use_container_width=True, height=150)
+
+        # Map code unchanged:
+        location_data = pd.DataFrame([{
+            "latitude": loc["lat"],
+            "longitude": loc["lon"],
+            "organisation": t["organisation"],
+            "title": t["officialTitle"],
+            "state": loc["state"],
+            "country": loc["country"]
+        } for t in trials for loc in t["locations"] if loc.get("lat") and loc.get("lon")])
+
+        if location_data.empty:
+            st.info("No location data available for this study.")
+        else:
+            st.subheader("Study Location")
+            view_state = pdk.ViewState(latitude=0, longitude=0, zoom=0.5, pitch=0)
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=location_data,
+                get_position='[longitude, latitude]',
+                get_radius=7,
+                radius_units='pixels',
+                get_fill_color=[0, 255, 0, 180],
+                pickable=True,
+                tooltip=True
+            )
+            tooltip = {
+                "html": """
+                    <b>Organisation:</b> {organisation}<br/>
+                    <b>Title:</b> {title}<br/>
+                    <b>State:</b> {state}<br/>
+                    <b>Country:</b> {country}
+                """,
+                "style": {
+                    "backgroundColor": "white",
+                    "color": "black",
+                    "fontSize": "12px"
+                }
+            }
+            st.pydeck_chart(pdk.Deck(map_style=None,
+                                     initial_view_state=view_state,
+                                     layers=[layer],
+                                     tooltip=tooltip),
+                             height=400)

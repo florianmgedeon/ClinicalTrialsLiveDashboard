@@ -60,6 +60,12 @@ def extract_summary(full_study: dict) -> dict:
 
 #MAIN:
 
+
+#USER INPUT
+
+
+
+
 trial = fetch_latest_trial_summary()
 if trial is None:
     st.error("No trials found.")
@@ -79,7 +85,19 @@ else:
         "Longitude": trial["locations"][0]["lon"] if trial["locations"] else "",
     }])
 
-st.dataframe(df, use_container_width=True, height=150)
+    df_show = pd.DataFrame([{
+        "Last Update": trial["lastUpdateSubmitDate"],
+        "Organisation": trial["organisation"],
+        "Title": trial["officialTitle"],
+        "NCT ID": trial["nctId"],
+        "Lead Sponsor": trial["leadSponsor"],
+        "Conditions": ", ".join(trial["conditions"]),
+        "Has Results": "Yes" if trial["hasResults"] else "No",
+        "Location State": trial["locations"][0]["state"] if trial["locations"] else "",
+        "Location Country": trial["locations"][0]["country"] if trial["locations"] else "",
+    }])
+st.subheader("Studies")
+st.dataframe(df_show, use_container_width=True, height=150)
 #MAP:
 location_data = pd.DataFrame([{
     "latitude": loc["lat"],
@@ -91,7 +109,7 @@ location_data = pd.DataFrame([{
 } for loc in trial["locations"] if loc.get("lat") and loc.get("lon")])
 
 if not location_data.empty:
-    st.subheader("Study Location(s)")
+    st.subheader("Study Location")
 
     # Set default view to global (zoomed out)
     view_state = pdk.ViewState(
